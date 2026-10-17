@@ -108,6 +108,12 @@ MESSAGE="${CCKA_PING_TEXT:-Reply with \"ok\" and nothing else.}"
 case "$IDLE"     in ''|*[!0-9]*) IDLE=3000 ;; esac
 case "$TICK"     in ''|*[!0-9]*) TICK=300 ;; esac
 case "$MAX_IDLE" in ''|*[!0-9]*) MAX_IDLE=43200 ;; esac
+# LOCAL PATCH (2026-10-12): never ping a cache that is already cold. If the
+# last cache touch (real activity or our last ping) is older than the TTL --
+# typically the machine slept through it -- a ping only pays a full rewrite.
+TTL="${CCKA_TTL_SECONDS:-3600}"
+case "$TTL" in ''|*[!0-9]*) TTL=3600 ;; esac
+cold=0
 [ "$TICK" -lt 1 ] && TICK=300
 
 # record our pid so a SessionEnd hook / the ctl script can stop us
@@ -171,8 +177,15 @@ while :; do
         log "idle $((idle / 3600))h exceeds max_idle; pausing pings until activity resumes"
         capped=1
       fi
+    elif [ $((now - (last > since_ping_last ? last : since_ping_last))) -ge "$TTL" ]; then
+      # LOCAL PATCH: cache already expired (e.g. woke from sleep); wait for activity
+      if [ "$cold" = 0 ]; then
+        log "last cache touch older than ttl ${TTL}s (slept?); skipping pings until activity resumes"
+        cold=1
+      fi
     else
       capped=0
+      cold=0
       log "idle $((idle / 60))m >= $((IDLE / 60))m -> emitting keepalive"
       printf '%s\n' "$MESSAGE"
       printf '%s' "$now" > "$PINGFILE" 2>/dev/null || true
