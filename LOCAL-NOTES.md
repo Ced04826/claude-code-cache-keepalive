@@ -1,36 +1,42 @@
 # 本机改造记录
 
-`github.com/demouo/claude-code-cache-keepalive`（克隆于 2026-10-12，上游提交 `a1cdeae`）的本地副本，带两处未上游化的补丁。插件从本目录安装（`claude plugin marketplace add` 指向本目录），安装时复制到 `~/.claude/plugins/cache/claude-cache-tools/cache-keepalive/<版本>/`。`git pull` 会冲掉补丁；更新后重打补丁，再 `claude plugin install cache-keepalive@claude-cache-tools` 重装。
+`github.com/demouo/claude-code-cache-keepalive`（克隆于 2026-10-12，上游提交 `a1cdeae`）的本地副本，带三处未上游化的补丁，工作在分支 `local/async-rewake`，插件版本号 `3.1.0-local`。插件从本目录安装（`claude plugin marketplace add` 指向本目录），安装时复制到 `~/.claude/plugins/cache/claude-cache-tools/cache-keepalive/<版本>/`。改完脚本后执行 `claude plugin marketplace update claude-cache-tools` 再 `claude plugin update cache-keepalive@claude-cache-tools`；版本号不变时不会重新复制，要先改版本号。`git pull` 会冲掉补丁，更新后重打。
 
 ## 用途
 
-主会话空闲约 50 分钟时续一次 1 小时档缓存，免得回来后整段重写。只管主会话，管不到子代理（子代理一律 5 分钟档，见 `E:\AI\LLM_Chat\Misc\LLM_BenchMark\skill\agent-dispatch\from_claude_code.md`）。
+主会话里缓存约 50 分钟没被用到时，唤醒会话读一次缓存，续上 1 小时档，免得回来后整段重写。终端和桌面 App 的本地会话都适用；云端会话不加载本机插件，管不到。只管主会话，管不到子代理（子代理一律 5 分钟档，见 `E:\AI\LLM_Chat\Misc\LLM_BenchMark\skill\agent-dispatch\from_claude_code.md`）。前台单步工具调用阻塞超过 1 小时（如前台跑第三方模型）时任何唤醒都插不进去，这类任务要放后台跑。
+
+## 工作方式
+
+每轮结束时，`Stop` 上的 `asyncRewake` hook（`scripts/cache-keepalive-rewake.sh`）在后台起一个计时：睡到"最后一次用到缓存 + `CCKA_IDLE_SECONDS`"，期间没有新活动就以退出码 2 结束，Claude Code 据此唤醒会话；唤醒那一轮结束时又自动挂上下一个计时，模型无需任何操作。"最后一次用到缓存"取心跳 `last_stop.<会话>`、上次续期 `last_ping.<会话>`、对话记录文件修改时间三者中最新的。每个会话只保留一个计时（`waiter.<会话>.pid`）：新计时、用户发消息、会话结束、`/cache-keepalive:off` 都会结束旧计时，被结束的计时不会唤醒会话。
 
 ## 本机前提
 
-- 依赖 Monitor 工具，`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 和 `DISABLE_TELEMETRY` 任一设置都会让它不运行。2026-10-12 起 `~/.claude/settings.json` 去掉了前者，改为单独设 `DISABLE_AUTOUPDATER`、`DISABLE_ERROR_REPORTING`、`DISABLE_BUG_COMMAND`，只放开遥测。改前原样在 `~/.claude/archive/settings_261012_before_keepalive.json`。
-- 只在交互式命令行会话里运行。
-- 配置 `~/.claude/cache-keepalive/config`：空闲 3000 秒触发、5 分钟检查一次、空闲 12 小时停、TTL 3600 秒（补丁 1 用）。
+- hook 配置在会话进程启动时读入并缓存：改动或重装只对之后新启动的会话进程生效，删掉配置文件也撤不掉正在运行的会话里的 hook。
+- `hooks/hooks.json` 里计时 hook 的 `timeout`（3600 秒）必须大于 `CCKA_IDLE_SECONDS`。
+- 配置 `~/.claude/cache-keepalive/config`：空闲 3000 秒触发、空闲 12 小时停、TTL 3600 秒；`CCKA_TICK_SECONDS` 只给已停用的 monitor 用。
+- 本机 `/opt/homebrew/bin/rm` 是移进回收站的替身，非交互 bash 也会用到；每轮都执行的清理一律清空文件而不删除。
 
 ## 补丁
 
 | 文件 | 改了什么 | 为什么 |
 |---|---|---|
-| `scripts/cache-keepalive-monitor.sh` | 新增 `CCKA_TTL_SECONDS`（默认 3600）：缓存最后一次被用到（真实活动或上次续期）已超过 TTL 时不续，等真实活动 | 电脑睡眠醒来后缓存早已过期，原版会立刻续一次，只会付一次整段重写 |
-| `scripts/cache-keepalive-stamp.sh` | 紧跟在插件续期之后、中间没有用户输入的 `Stop` 不计为活动 | 原版每次续期回合的 `Stop` 都重置空闲计时，`CCKA_MAX_IDLE_SECONDS` 永远到不了，会话开着就一直续 |
+| `scripts/cache-keepalive-monitor.sh`、`cache-keepalive-rewake.sh` | `CCKA_TTL_SECONDS`（默认 3600）：缓存最后一次被用到已超过 TTL 时不续，等真实活动 | 电脑睡眠醒来后缓存早已过期，续一次只会付一次整段重写 |
+| `scripts/cache-keepalive-stamp.sh` | 紧跟在插件续期之后、中间没有用户输入的 `Stop` 不计为活动 | 否则每次续期都重置空闲计时，`CCKA_MAX_IDLE_SECONDS` 永远到不了 |
+| 新增 `scripts/cache-keepalive-rewake.sh`；`hooks.json` 加 `asyncRewake` 的 `Stop` hook；删除 `monitors/monitors.json`；`stamp`、`cleanup`、`ctl` 能结束计时 | 用 hook 计时替换插件 monitor，housekeep 改由计时脚本调用 | Claude Code 只在交互式命令行里启动插件 monitor，桌面 App 里从不启动；由模型手动调用 Monitor 工具又有 30 分钟上限，还得每次重挂 |
 
-两处都标了 `LOCAL PATCH`。验证方式：用很短的时间参数和临时 `CCKA_STATE_DIR` 跑脚本，在 Claude Code 里测要先 `env -u CLAUDE_CODE_SESSION_ID`，否则会话 ID 取的是当前会话。
+均标了 `LOCAL PATCH`。测试：`test.sh`（原有 60 项）和 `test-rewake.sh`（计时脚本 19 项），在 Claude Code 里跑要先 `env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_SESSION_ID`，否则会话 ID 取的是当前会话。
 
 ## 两台机器
 
-| 机器 | 仓库位置 | settings.json 的 env |
+| 机器 | 仓库位置 | 补丁 |
 |---|---|---|
-| Windows 本机 | `E:\AI\LLM_Management\Claude_Code\claude-code-cache-keepalive` | 去掉 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，单设 `DISABLE_AUTOUPDATER`、`DISABLE_ERROR_REPORTING`、`DISABLE_BUG_COMMAND` |
-| Mac mini（`192.168.5.50`） | `~/AI/LLM_Management/claude-code-cache-keepalive` | 用户已把 `NONESSENTIAL` 改名为 `_off_…` 停用；2026-10-12 加 `DISABLE_AUTOUPDATER`、`DISABLE_ERROR_REPORTING`，改前原样在 `~/.claude/archive/settings_261012_before_keepalive.json` |
+| Windows 本机 | `E:\AI\LLM_Management\Claude_Code\claude-code-cache-keepalive` | 只有前两处，仍用 monitor（只在终端有效；settings 里不能设 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 或 `DISABLE_TELEMETRY`，否则 Monitor 不运行） |
+| Mac mini（`192.168.5.50`） | `~/AI/LLM_Management/claude-code-cache-keepalive` | 三处 |
 
-两边都打了同样两处补丁，配置文件相同。Mac 的副本从 Windows 复制过去：Windows 上 git 克隆出的是 CRLF，复制后要在 Mac 上转回 LF（`find . -type f -not -path "./.git/*" -exec perl -pi -e "s/\r\n/\n/" {} +`），否则 macOS 的 bash 3.2 跑不了脚本。两处补丁在 bash 3.2 上测过。
+Windows 上 git 克隆出的是 CRLF，复制到 Mac 后要转回 LF（`find . -type f -not -path "./.git/*" -exec perl -pi -e "s/\r\n/\n/" {} +`），否则 macOS 的 bash 3.2 跑不了脚本。
 
 ## 查看与关闭
 
-- 状态：新会话里 `/cache-keepalive:status`；日志 `~/.claude/cache-keepalive/cache-keepalive.<会话>.log`。
+- 状态：`/cache-keepalive:status`；日志 `~/.claude/cache-keepalive/cache-keepalive.<会话>.log`，每次挂上计时记一行 `armed`，唤醒记 `rewaking`。
 - 关闭：`/cache-keepalive:off`（本会话）；卸载 `claude plugin uninstall cache-keepalive@claude-cache-tools` 加 `claude plugin marketplace remove claude-cache-tools`。

@@ -42,6 +42,8 @@ safe="$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')"
 
 SESSION_OFF="$STATE_DIR/disabled.$safe"
 SESSION_PIDFILE="$STATE_DIR/monitor.$safe.pid"
+# LOCAL PATCH (2026-10-17): the Stop-hook rewake waiter replaces the monitor
+SESSION_WAITER="$STATE_DIR/waiter.$safe.pid"
 
 # Only real monitor processes: match on argv precisely. `pgrep -f` matches the
 # whole command line, so an editor or a shell whose command merely *mentions*
@@ -79,7 +81,7 @@ stop_pidfile() {
   esac
   cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   case "$cmd" in
-    *cache-keepalive-monitor*)
+    *cache-keepalive-monitor*|*cache-keepalive-rewake*)
       kill "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5; do
         kill -0 "$pid" 2>/dev/null || break
@@ -92,8 +94,7 @@ stop_pidfile() {
 }
 
 arm_hint() {
-  echo "  /reload-plugins   (the plugin monitor restarts automatically)"
-  echo "  or the Monitor tool: Monitor(command=\"bash $HERE/cache-keepalive-monitor.sh\", persistent=true)"
+  echo "  nothing to do: the Stop hook arms the rewake waiter at the end of the next turn"
 }
 
 case "${1:-status}" in
@@ -115,6 +116,11 @@ case "${1:-status}" in
     fi
     if [ -f "$SESSION_PIDFILE" ]; then
       echo "session mon : pid $(cat "$SESSION_PIDFILE" 2>/dev/null || echo '?')"
+    fi
+    if [ -s "$SESSION_WAITER" ]; then
+      echo "session wait: rewake waiter pid $(cat "$SESSION_WAITER" 2>/dev/null || echo '?')"
+    else
+      echo "session wait: none (armed at the end of the next turn)"
     fi
     pids="$(monitor_pids | tr '\n' ' ')"
     if [ -n "$pids" ]; then
@@ -153,6 +159,7 @@ case "${1:-status}" in
     mkdir -p "$STATE_DIR" 2>/dev/null || true
     : > "$SESSION_OFF"
     stop_pidfile "$SESSION_PIDFILE"
+    stop_pidfile "$SESSION_WAITER"
     echo "cache-keepalive: OFF for this session only (session=$safe)"
     echo "other running sessions are untouched; only this session id will skip"
     echo "auto-start. Re-arm by running this script with 'on' (then /reload-plugins)."
@@ -184,7 +191,10 @@ case "${1:-status}" in
       kill -9 "$pid" 2>/dev/null || true
     done
     rm -f "$STATE_DIR"/monitor.*.pid 2>/dev/null || true
-    echo "cache-keepalive: OFF for ALL sessions (global marker written, monitors stopped)"
+    for wf in "$STATE_DIR"/waiter.*.pid; do
+      [ -s "$wf" ] && stop_pidfile "$wf"
+    done
+    echo "cache-keepalive: OFF for ALL sessions (global marker written, monitors and waiters stopped)"
     echo "it will not auto-start again until you run this script with 'on-all'"
     ;;
 

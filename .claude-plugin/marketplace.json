@@ -8,7 +8,7 @@
     {
       "name": "cache-keepalive",
       "source": "./plugins/cache-keepalive",
-      "description": "Keep Claude Code's prompt cache warm across idle pauses. A Stop hook stamps activity and a background Monitor pings the session only after it has been idle long enough (default 50 min) to threaten the TTL, refreshing the cache with one cheap read. Built for a 1h TTL; disable on request-quota subscriptions."
+      "description": "Keep Claude Code's prompt cache warm across idle pauses. A Stop/UserPromptSubmit hook stamps activity; an asyncRewake Stop hook waits in the background and wakes the session only once the cache has been untouched long enough (default 50 min), which triggers a cache read and refreshes the prompt-cache TTL. Works in the CLI and the desktop app. Built for a 1h cache TTL; on request-quota subscriptions every ping eats quota, so disable it there."
     }
   ]
 }

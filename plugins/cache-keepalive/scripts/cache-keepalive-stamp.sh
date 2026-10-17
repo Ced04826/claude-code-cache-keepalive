@@ -45,6 +45,20 @@ if [ "$event" = "Stop" ]; then
   fi
 fi
 
+# LOCAL PATCH (2026-10-17): a prompt starts a turn, so this session's rewake
+# waiter must not fire mid-turn; the Stop that ends the turn arms a new one.
+if [ "$event" = "UserPromptSubmit" ]; then
+  wp="$(cat "$STATE_DIR/waiter.$safe.pid" 2>/dev/null || true)"
+  case "$wp" in
+    ''|*[!0-9]*) : ;;
+    *)
+      case "$(ps -p "$wp" -o command= 2>/dev/null || true)" in
+        *cache-keepalive-rewake*) kill "$wp" 2>/dev/null || true ;;
+      esac
+      ;;
+  esac
+fi
+
 printf '%s' "$now" > "$STATE_DIR/last_stop.$safe" 2>/dev/null || true
 printf '%s' "$now" > "$STATE_DIR/last_stop"       2>/dev/null || true   # fallback
 printf '%s' "$safe" > "$STATE_DIR/last_session"   2>/dev/null || true

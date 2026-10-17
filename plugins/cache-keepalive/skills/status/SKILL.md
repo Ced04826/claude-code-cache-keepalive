@@ -10,5 +10,5 @@ Report the keepalive status. Run:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/cache-keepalive-ctl.sh" status
 ```
 
-Then summarise: whether it is on, how many monitors are running, and the config
-(idle threshold and tick).
+Then summarise: whether it is on, whether this session's rewake waiter is armed,
+and the config (idle threshold, max idle, ttl).
