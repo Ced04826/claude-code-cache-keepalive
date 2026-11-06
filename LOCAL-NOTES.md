@@ -1,6 +1,6 @@
-# 本机改造记录
+# Fork 维护记录
 
-`github.com/demouo/claude-code-cache-keepalive`（克隆于 2026-10-12，上游提交 `a1cdeae`）的本地副本，带三处未上游化的补丁，工作在分支 `local/async-rewake`，插件版本号 `3.1.0-local`。插件从本目录安装（`claude plugin marketplace add` 指向本目录），安装时复制到 `~/.claude/plugins/cache/claude-cache-tools/cache-keepalive/<版本>/`。改完脚本后执行 `claude plugin marketplace update claude-cache-tools` 再 `claude plugin update cache-keepalive@claude-cache-tools`；版本号不变时不会重新复制，要先改版本号。`git pull` 会冲掉补丁，更新后重打。
+自维护 fork：`github.com/Ced04826/claude-code-cache-keepalive`（remote `origin`），派生自 `github.com/demouo/claude-code-cache-keepalive`（remote `upstream`，2026-09-22 后无更新，克隆时提交 `a1cdeae`）。改动直接提交到 `main` 并推送到 `origin`；上游若有更新，`git fetch upstream` 后合并。插件从本目录安装（`claude plugin marketplace add` 指向本目录），安装时复制到 `~/.claude/plugins/cache/claude-cache-tools/cache-keepalive/<版本>/`。改完脚本后先改 `plugin.json` 的版本号（版本号不变时不会重新复制），再执行 `claude plugin marketplace update claude-cache-tools` 和 `claude plugin update cache-keepalive@claude-cache-tools`。
 
 ## 用途
 
@@ -24,15 +24,16 @@
 | `scripts/cache-keepalive-monitor.sh`、`cache-keepalive-rewake.sh` | `CCKA_TTL_SECONDS`（默认 3600）：缓存最后一次被用到已超过 TTL 时不续，等真实活动 | 电脑睡眠醒来后缓存早已过期，续一次只会付一次整段重写 |
 | `scripts/cache-keepalive-stamp.sh` | 紧跟在插件续期之后、中间没有用户输入的 `Stop` 不计为活动 | 否则每次续期都重置空闲计时，`CCKA_MAX_IDLE_SECONDS` 永远到不了 |
 | 新增 `scripts/cache-keepalive-rewake.sh`；`hooks.json` 加 `asyncRewake` 的 `Stop` hook；删除 `monitors/monitors.json`；`stamp`、`cleanup`、`ctl` 能结束计时 | 用 hook 计时替换插件 monitor，housekeep 改由计时脚本调用 | Claude Code 只在交互式命令行里启动插件 monitor，桌面 App 里从不启动；由模型手动调用 Monitor 工具又有 30 分钟上限，还得每次重挂 |
+| `scripts/cache-keepalive-rewake.sh` | 唤醒提示词分两层：通用部分（脚本默认值，可用 `CCKA_PING_TEXT` 整段替换）检查未收尾工作，已完成、报错或超时的接着处理，否则只回 ok；项目层 `<项目>/.claude/cache-keepalive-ping.md` 在唤醒时追加在后面（项目目录取 `CLAUDE_PROJECT_DIR`，没有则取钩子输入的 `cwd`） | 唤醒顺带巡检长跑任务；项目专用检查（如 Trading 的 `watch_dispatch.sh`）随项目仓库走，不进全局配置 |
 
-均标了 `LOCAL PATCH`。测试：`test.sh`（原有 60 项）和 `test-rewake.sh`（计时脚本 19 项），在 Claude Code 里跑要先 `env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_SESSION_ID`，否则会话 ID 取的是当前会话。
+相对上游的改动均标了 `LOCAL PATCH`。测试：`test.sh`（原有 60 项）和 `test-rewake.sh`（计时脚本 19 项），在 Claude Code 里跑要先 `env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_SESSION_ID`，否则会话 ID 取的是当前会话。
 
 ## 两台机器
 
 | 机器 | 仓库位置 | 补丁 |
 |---|---|---|
-| Windows 本机 | `E:\AI\LLM_Management\Claude_Code\claude-code-cache-keepalive` | 只有前两处，仍用 monitor（只在终端有效；settings 里不能设 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 或 `DISABLE_TELEMETRY`，否则 Monitor 不运行） |
-| Mac mini（`192.168.5.50`） | `~/AI/LLM_Management/claude-code-cache-keepalive` | 三处 |
+| Windows 本机 | `E:\AI\LLM_Management\Claude_Code\claude-code-cache-keepalive` | 只有前两处，仍用 monitor，可改为从 fork 拉取（只在终端有效；settings 里不能设 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 或 `DISABLE_TELEMETRY`，否则 Monitor 不运行） |
+| Mac mini（`192.168.5.50`） | `~/AI/LLM_Management/claude-code-cache-keepalive` | 四处 |
 
 Windows 上 git 克隆出的是 CRLF，复制到 Mac 后要转回 LF（`find . -type f -not -path "./.git/*" -exec perl -pi -e "s/\r\n/\n/" {} +`），否则 macOS 的 bash 3.2 跑不了脚本。
 

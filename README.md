@@ -200,7 +200,7 @@ visible to monitors, so use the config file or environment.)
 | `CCKA_IDLE_SECONDS` | `3000` | Idle time before pinging (50 min) |
 | `CCKA_TICK_SECONDS` | `300` | Poll granularity (5 min) |
 | `CCKA_MAX_IDLE_SECONDS` | `43200` | Stop pinging once idle exceeds this (12 h; `0` = never) |
-| `CCKA_PING_TEXT` | `Reply with "ok" and nothing else.` | The line delivered to Claude |
+| `CCKA_PING_TEXT` | built-in check-your-work text (rewake hook) | Base text delivered to Claude; `<project>/.claude/cache-keepalive-ping.md` is appended to it in that project |
 | `CCKA_STATE_DIR` | `~/.claude/cache-keepalive` | State + log directory |
 | `CCKA_LOG` | `$CCKA_STATE_DIR/cache-keepalive.<session>.log` | Explicit log path override |
 | `CCKA_ENABLED` | `1` | `0` / `false` / `no` / `off` disables the monitor |
@@ -256,6 +256,7 @@ The monitor auto-starts with the session, but it does not have to:
 | Stop it for **this session only** (default) | `/cache-keepalive:off` (per-session marker; other and new sessions unaffected) |
 | Stop it **everywhere**, for good | `cache-keepalive-ctl.sh off-all` (global marker) |
 | Don't start it in this project | `touch <project>/.claude/cache-keepalive-off` |
+| Add project-specific checks to the ping | write them in `<project>/.claude/cache-keepalive-ping.md` (appended to the base text) |
 | Don't start it anywhere | `CCKA_ENABLED=0` in `~/.claude/cache-keepalive/config` |
 | Turn **this session** back on | `cache-keepalive-ctl.sh on`, then `/reload-plugins` |
 | Turn **everything** back on | `cache-keepalive-ctl.sh on-all`, then `/reload-plugins` |
@@ -319,9 +320,9 @@ rm -rf ~/.claude/cache-keepalive          # optional: also drop state + logs
    case is a monitor that cannot see `CLAUDE_SESSION_ID`, which falls back
    to the global `last_stop`.
 4. **The ping is a real turn.** It appears in the transcript and costs one
-   cache read + a short reply. Keep `CCKA_PING_TEXT` bland; the default already
-   asks only for a one-word `ok`, so the added turn stays as small and as
-   unobtrusive as possible.
+   cache read + a short reply. The default asks Claude to check unfinished
+   work (subagents, background commands, monitors) and handle what is done,
+   failed or overdue; with nothing pending it replies `ok` and calls no tools.
 5. **Experimental.** Plugin monitors are an experimental component and run
    unsandboxed at hook trust level.
 6. **Provider.** The keepalive runs on any provider whose Claude Code can

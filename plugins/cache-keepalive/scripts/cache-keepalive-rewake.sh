@@ -25,7 +25,11 @@
 #   CCKA_MAX_IDLE_SECONDS   no real activity for this long -> stop pinging
 #                                                       (default 43200 = 12h; 0 = never)
 #   CCKA_TTL_SECONDS        cache already older than this -> cold, skip (default 3600)
-#   CCKA_PING_TEXT          text delivered to Claude
+#   CCKA_PING_TEXT          base text delivered to Claude (default: check unfinished
+#                           work, handle what is done/stuck/overdue, else reply "ok")
+# Per project: if <project>/.claude/cache-keepalive-ping.md exists, its text is
+# appended to the base text when the ping fires (read at fire time, so edits
+# apply without re-arming). <project> = $CLAUDE_PROJECT_DIR, else the hook's cwd.
 #   CCKA_STATE_DIR / CCKA_LOG / CCKA_ENABLED as in the other scripts
 # The hook's "timeout" in hooks.json must stay above CCKA_IDLE_SECONDS.
 # ============================================================
@@ -74,7 +78,26 @@ fi
 IDLE="${CCKA_IDLE_SECONDS:-3000}"
 MAX_IDLE="${CCKA_MAX_IDLE_SECONDS:-43200}"
 TTL="${CCKA_TTL_SECONDS:-3600}"
-MESSAGE="${CCKA_PING_TEXT:-cache-keepalive ping: reply with \"ok\" and nothing else.}"
+# LOCAL PATCH (2026-11-06): a generic "check unfinished work" ping, plus an
+# optional per-project supplement (see header)
+read -r -d '' DEFAULT_PING <<'EOF_PING'
+缓存保活唤醒（定时续缓存，不是用户消息）。先看本会话有没有尚未收尾的工作：已派出、未验收的子代理或会话，run_in_background 后台命令，Monitor 监视，其他长跑任务。
+1. 都没有：只回复 ok，不读文件，不调用任何工具。
+2. 已收到完成或报错通知的：在原任务范围内接着处理（验收、接续、修复）。
+3. 还没收到完成通知的：对照派发时说明的预计结束时刻，没写的按任务性质估计。已超出预计时长一半以上且至少 15 分钟的，直接查一次它等待的源头（进程是否还在，日志或状态文件里有没有结束、拒绝或报错记录），按查到的结果处理；未超时的不查。
+4. 不另起轮询，不原地等待；需要用户决定的不擅自做，用一两句话说明阻塞在哪。除此之外只回复 ok。
+EOF_PING
+BASE_PING="${CCKA_PING_TEXT:-$DEFAULT_PING}"
+PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(json_field cwd)}"
+PROJ_PING=""
+[ -n "$PROJ_DIR" ] && PROJ_PING="$PROJ_DIR/.claude/cache-keepalive-ping.md"
+build_message() {
+  printf '%s\n' "$BASE_PING"
+  if [ -n "$PROJ_PING" ] && [ -s "$PROJ_PING" ]; then
+    printf '\n本项目补充（与上面冲突时以此为准）：\n'
+    cat "$PROJ_PING" 2>/dev/null
+  fi
+}
 case "$IDLE"     in ''|*[!0-9]*) IDLE=3000 ;; esac
 case "$MAX_IDLE" in ''|*[!0-9]*) MAX_IDLE=43200 ;; esac
 case "$TTL"      in ''|*[!0-9]*) TTL=3600 ;; esac
@@ -143,7 +166,7 @@ while :; do
   if [ "$since" -ge "$IDLE" ]; then
     printf '%s' "$now" > "$PINGFILE" 2>/dev/null || true
     log "untouched ${since}s >= ${IDLE}s -> rewaking"
-    printf '%s\n' "$MESSAGE" >&2
+    build_message >&2
     exit 2
   fi
   # background sleep + wait so a TERM from the next waiter ends us at once
